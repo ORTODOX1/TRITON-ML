@@ -79,3 +79,7 @@ class RULEstimator:
                 preds.append(self._model(xt).cpu().numpy())
         stacked = np.stack(preds, axis=0)
         return stacked.mean(axis=0), stacked.std(axis=0)
+
+    def get_model(self) -> nn.Module:
+        """Return the underlying PyTorch model for export."""
+        return self._model
