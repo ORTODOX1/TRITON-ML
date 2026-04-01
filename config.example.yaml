@@ -1,0 +1,55 @@
+# TRITON-ML Configuration Example
+# Copy to config.yaml and adjust for your vessel / equipment.
+
+# -- Data paths ----------------------------------------------------------
+paths:
+  raw_telemetry: "data/raw"           # Raw sensor dumps (Parquet / CSV)
+  processed_features: "data/features" # Engineered feature tables
+  trained_models: "models/checkpoints"
+  onnx_export: "models/onnx"
+
+# -- Model hyperparameters -----------------------------------------------
+model:
+  # XGBoost fault classifier
+  xgb_n_estimators: 400
+  xgb_max_depth: 6
+  xgb_learning_rate: 0.05
+
+  # PyTorch RUL estimator (DNN with MC-dropout)
+  rul_hidden_dim: 128
+  rul_dropout: 0.20
+  rul_mc_samples: 50          # Monte-Carlo forward passes for uncertainty
+
+  # Isolation Forest anomaly detector
+  isolation_contamination: 0.02
+
+# -- Alert thresholds (ISO 20816 zones) ----------------------------------
+alerts:
+  watch_rul_hours: 720.0      # 30 days -- schedule inspection at next port
+  alarm_rul_hours: 168.0      #  7 days -- initiate maintenance planning
+  shutdown_rul_hours: 24.0    #  1 day  -- recommend load reduction / shutdown
+  anomaly_score_limit: -0.35  # Isolation Forest score below this = anomaly
+
+# -- ONNX export settings ------------------------------------------------
+onnx:
+  opset_version: 17
+  optimise_for_mobile: true   # Strip training-only ops for edge inference
+  dynamic_axes:
+    input:  { 0: "batch" }
+    output: { 0: "batch" }
+
+# -- Training run ---------------------------------------------------------
+training:
+  epochs: 100
+  batch_size: 64
+  learning_rate: 0.001
+  validation_split: 0.15
+  early_stopping_patience: 10
+  seed: 42
+
+# -- Equipment context (used for logging and alert routing) ---------------
+equipment:
+  vessel_name: "MV Example"
+  equipment_id: "ME-001"
+  equipment_type: "main_engine"
+  mcr_kw: 12000.0

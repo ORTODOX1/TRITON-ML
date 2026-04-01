@@ -1,0 +1,73 @@
+version: "3.9"
+
+services:
+  # -- TRITON-ML training and inference -----------------------------------
+  triton-ml:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: triton-ml
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      - TRITON_CONFIG=/app/config.yaml
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - triton-net
+
+  # -- TimescaleDB for time-series sensor storage -------------------------
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: triton-timescaledb
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: triton
+      POSTGRES_PASSWORD: triton_secret
+      POSTGRES_DB: triton_telemetry
+    volumes:
+      - tsdb-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U triton"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - triton-net
+
+  # -- Grafana for dashboards and alert visualization ---------------------
+  grafana:
+    image: grafana/grafana:11.0.0
+    container_name: triton-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: triton_grafana
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    networks:
+      - triton-net
+
+volumes:
+  tsdb-data:
+  grafana-data:
+
+networks:
+  triton-net:
+    driver: bridge
