@@ -41,7 +41,7 @@ class ONNXExporter:
         out_path = dest or self._cfg.paths.onnx_export / "rul_model.onnx"
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
-        model = estimator._model
+        model = estimator.get_model()
         model.eval()
         dummy = torch.randn(1, input_dim)
 

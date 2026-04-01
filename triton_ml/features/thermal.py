@@ -74,6 +74,8 @@ class ThermalFeatureExtractor:
         if n < 2:
             return 0.0
         x = np.arange(n, dtype=np.float64)
-        slope = float((n * np.dot(x, series) - x.sum() * series.sum())
-                       / (n * np.dot(x, x) - x.sum() ** 2))
+        denominator = n * np.dot(x, x) - x.sum() ** 2
+        if abs(denominator) < 1e-12:
+            return 0.0
+        slope = float((n * np.dot(x, series) - x.sum() * series.sum()) / denominator)
         return slope

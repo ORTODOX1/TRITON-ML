@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Optional
 
 import xgboost as xgb
 import shap
