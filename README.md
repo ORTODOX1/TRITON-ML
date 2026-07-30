@@ -7,201 +7,177 @@
 [![XGBoost](https://img.shields.io/badge/XGBoost-2.x-006600.svg)](https://xgboost.readthedocs.io/)
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-1.x-F7931E.svg?logo=scikit-learn&logoColor=white)](https://scikit-learn.org/)
 
+> **Scope, up front.** This is a small research preview written by a marine engineer
+> learning applied ML -- not a product. What exists today is a feature extraction
+> library, three model wrappers, an alert engine and an ONNX exporter, all covered by
+> unit tests. There is **no bundled dataset, no trained model weights, no data
+> ingestion layer, and no end-to-end training pipeline.** The
+> [Not implemented yet](#not-implemented-yet) section lists exactly what is missing.
+
 ---
 
 ## Problem Statement
 
-Unplanned downtime of marine diesel engines costs vessel operators between **$50,000 and $500,000 per day**, depending on vessel class and charter rates. Traditional time-based maintenance schedules -- replacing components at fixed intervals regardless of actual condition -- lead to two costly outcomes: premature replacement of healthy parts, and unexpected failures of components that deteriorate faster than the schedule assumes.
+Unplanned failures of marine machinery are expensive and unsafe. Time-based
+maintenance -- replacing components at fixed intervals regardless of their actual
+condition -- gets it wrong in both directions: healthy parts are discarded early,
+while parts degrading faster than the schedule assumes fail in service, often far
+from a port.
 
-Condition-based predictive maintenance driven by machine learning addresses both failure modes. By continuously monitoring sensor data from shipboard machinery, TRITON-ML detects early-stage degradation patterns and estimates remaining useful life, enabling maintenance to be scheduled precisely when needed. Industry data shows that ML-based condition monitoring **reduces maintenance costs by 30--50%** and cuts unplanned downtime by up to 70%.
+Condition-based maintenance attacks both problems by deciding from sensor data
+rather than from a calendar. TRITON-ML is my attempt to build that decision layer
+for shipboard machinery: turn raw vibration, temperature and performance telemetry
+into interpretable condition indicators, feed them to models that flag a fault mode
+and estimate remaining useful life, and surface the result as a graded alert an
+engineer can check against what the machine is actually doing.
 
-TRITON-ML is an end-to-end pipeline purpose-built for the maritime domain: from raw sensor ingestion through feature engineering, fault classification, remaining useful life estimation, and explainable alerting -- all designed to meet classification society expectations for transparent, auditable decision support.
+I have deliberately left savings percentages and cost-per-day figures out of this
+README. Numbers like that circulate widely without traceable sourcing, and this
+project has measured none of them.
 
 ---
 
-## Architecture
+## What Is Implemented
 
 ```
-+---------------------+       +----------------------+       +---------------------+
-|   DATA INGESTION    |       |  FEATURE ENGINEERING |       |    MODEL LAYER      |
-|                     |       |                      |       |                     |
-|  NMEA 2000 / J1939  +------>+  Vibration: FFT,     +------>+  XGBoost Classifier |
-|  Modbus RTU (SCADA)  |       |   RMS, Kurtosis,    |       |   (Fault Detection) |
-|  CSV / Parquet logs  |       |   Crest Factor,     |       |                     |
-|  AIS context data    |       |   Envelope Analysis  |       |  DNN Regressor      |
-|                     |       |                      |       |   (RUL Estimation)  |
-+---------------------+       |  Temperature: Trend  |       |                     |
-                              |   Slopes, Delta-T,   |       |  Isolation Forest   |
-                              |   Thermal Gradients  |       |   (Anomaly Detect.) |
-                              |                      |       |                     |
-                              |  Pressure: Oil Press  |       +----------+----------+
-                              |   vs RPM, Injection  |                  |
-                              |   Pressure Profiles  |                  v
-                              |                      |       +---------------------+
-                              |  Operational: Load   |       |   EXPLAINABILITY    |
-                              |   Factor, SFOC,      |       |                     |
-                              |   Power Output       |       |  SHAP Values for    |
-                              +----------------------+       |  Every Prediction   |
-                                                             |                     |
-                                                             +----------+----------+
-                                                                        |
-                                                                        v
-                                                             +---------------------+
-                                                             |     ALERTING        |
-                                                             |                     |
-                                                             |  NORMAL --> WATCH   |
-                                                             |  WATCH  --> ALARM   |
-                                                             |  ALARM  --> SHUTDOWN|
-                                                             +---------------------+
+                    +-------------------------------------+
+   raw arrays  -->  |          FeaturePipeline            |  --> 15 features
+   (NumPy)          |  vibration | thermal | operational  |      (flat dict)
+                    +-------------------------------------+
+                                     |
+                 +-------------------+-------------------+
+                 v                   v                   v
+        +----------------+  +----------------+  +------------------+
+        | FaultClassifier|  |  RULEstimator  |  | AnomalyDetector  |
+        |    XGBoost     |  |  PyTorch MLP   |  | Isolation Forest |
+        |  + SHAP values |  |  + MC-dropout  |  |                  |
+        +----------------+  +----------------+  +------------------+
+                 |                   |                   |
+                 +-------------------+-------------------+
+                                     v
+                        +----------------------+     +------------------+
+                        |     AlertEngine      |     |   ONNXExporter   |
+                        | NORMAL/WATCH/ALARM/  |     | RUL net -> .onnx |
+                        |       SHUTDOWN       |     +------------------+
+                        |  -> WebSocket (JSON) |
+                        +----------------------+
 ```
 
----
+Inputs are plain NumPy arrays supplied by the caller. Getting sensor data into those
+arrays is out of scope for the current code.
 
-## Core Pipeline
+### 1. Feature Engineering
 
-### 1. Data Ingestion
+`FeaturePipeline.run()` produces **15 features**, five per domain, as a flat dict
+keyed `<domain>__<feature>`:
 
-TRITON-ML consumes sensor streams from multiple shipboard sources in real time and batch modes:
+| Domain | Features |
+|---|---|
+| `vib__` | `rms`, `kurtosis` (excess), `crest_factor`, `dominant_freq_hz`, `envelope_peak` |
+| `therm__` | `mean_temp_c`, `max_delta_t`, `gradient_c_per_min`, `trend_slope`, `cylinder_spread` |
+| `ops__` | `load_factor`, `sfoc_g_per_kwh`, `power_output_kw`, `scavenge_pressure_bar`, `torque_deviation_pct` |
 
-| Source | Protocol | Data |
+How they are computed:
+
+- **Vibration** (`features/vibration.py`) -- RMS, excess kurtosis and crest factor
+  from the time series; dominant frequency from a Welch power spectral density;
+  envelope peak from the magnitude of the Hilbert transform. The full PSD array is
+  also returned on the dataclass as `spectral_energy`, but the pipeline skips array
+  fields, so it is not one of the 15 scalar features.
+- **Thermal** (`features/thermal.py`) -- mean temperature, maximum and mean
+  inter-sensor spread per timestep, mean temporal gradient in degC/min, and an
+  ordinary-least-squares trend slope over the window.
+- **Operational** (`features/operational.py`) -- shaft power from `P = 2*pi*n*T/60`,
+  load factor against a configurable MCR, SFOC in g/kWh, mean scavenge air pressure,
+  and torque deviation from a 10-sample running mean.
+
+### 2. Models
+
+**`FaultClassifier` -- XGBoost, single-label multiclass**
+
+Six mutually exclusive classes: `NORMAL`, `BEARING_WEAR`, `MISALIGNMENT`,
+`IMBALANCE`, `FOULING`, `INJECTOR_FAULT` (`objective="multi:softprob"`, 400 trees,
+depth 6, learning rate 0.05, `tree_method="hist"`). `train()` also fits a SHAP
+`TreeExplainer`, so `explain()` returns per-feature attributions for any batch.
+Class imbalance is **not** handled -- there is no resampling and no class weighting.
+
+**`RULEstimator` -- PyTorch MLP with MC-dropout**
+
+Fully connected network `input -> 128 -> 64 -> 1`, with ReLU and dropout (p = 0.20)
+after the first two layers, trained with Adam and plain `nn.MSELoss`. There is no
+batch normalisation and no asymmetric loss.
+
+`predict()` keeps dropout active and runs 50 stochastic forward passes, returning
+`(mean, std)` across them. That standard deviation is **epistemic** (model)
+uncertainty -- it measures disagreement between dropout sub-networks. It is not
+aleatoric uncertainty, which would require the network to predict its own noise
+variance.
+
+Input is one flat feature vector per sample, not a rolling time window.
+
+**`AnomalyDetector` -- Isolation Forest**
+
+scikit-learn `IsolationForest` (200 estimators, `contamination=0.02`,
+`random_state=42`) for behaviour the supervised classifier has never seen. `score()`
+returns `score_samples()` output; `is_anomalous()` flags anything below the
+configured limit (default `-0.35`).
+
+### 3. Explainability
+
+SHAP is wired up for the **fault classifier only**, via `TreeExplainer`. Calling
+`explain()` before `train()` raises. The RUL network has no SHAP integration, and
+there is no automatic audit-log persistence -- explanations are returned to the
+caller, not written anywhere.
+
+### 4. Alerting
+
+`AlertEngine.evaluate()` maps a remaining-useful-life estimate onto four tiers:
+
+| Level | Trigger (default thresholds) | Intended action |
 |---|---|---|
-| Engine control systems | NMEA 2000 / J1939-76 (CAN bus) | RPM, exhaust temps, turbo speed, load |
-| PLC / SCADA | Modbus RTU | Pressures, flow rates, tank levels |
-| Historical logs | CSV / Parquet | Maintenance records, voyage data |
-| AIS transponder | AIS (NMEA 0183) | Speed over ground, heading, operational context |
+| **NORMAL** | RUL > 720 h | Continue monitoring |
+| **WATCH** | RUL <= 720 h (30 days) | Schedule inspection at next port |
+| **ALARM** | RUL <= 168 h (7 days) | Start maintenance planning |
+| **SHUTDOWN** | RUL <= 24 h | Recommend load reduction or controlled shutdown |
 
-The ingestion layer handles timestamp alignment across sources with different sampling rates (vibration at 25.6 kHz, process parameters at 1 Hz, AIS at 0.1 Hz) and manages data quality checks including gap detection, outlier flagging, and sensor drift compensation.
+An anomaly score below `anomaly_score_limit` escalates `NORMAL`/`WATCH` to `ALARM`.
+These thresholds are project defaults, configurable via `AlertThresholds`; they are
+not taken from any standard. `send()` serialises the alert to JSON and pushes it
+over a WebSocket connection (default `ws://aegis-monitor:8400/ws/alerts`, matching
+the companion [AEGIS-MONITOR](https://github.com/hermandoronin/AEGIS-MONITOR)
+dashboard); dispatch failures are logged, not raised.
 
-### 2. Feature Engineering
+### 5. ONNX Export
 
-**72+ engineered features** are extracted from raw sensor data, organized by physical domain:
-
-**Vibration Analysis**
-- FFT spectral decomposition with characteristic frequency tracking (bearing BPFO/BPFI/BSF/FTF)
-- RMS velocity and acceleration (ISO 10816 / ISO 20816 bands)
-- Kurtosis and crest factor for impulse detection
-- Envelope analysis (amplitude demodulation) for early bearing fault identification
-- Spectral kurtosis for optimal band selection
-
-**Temperature Monitoring**
-- Linear trend slopes over configurable windows (1h, 6h, 24h, 7d)
-- Delta-T across component pairs (e.g., cooling water inlet vs. outlet)
-- Thermal gradient rates for detecting fouling and blockage
-- Exhaust gas temperature spread across cylinders
-
-**Pressure Analysis**
-- Lube oil pressure vs. RPM characteristic curves with deviation scoring
-- Fuel injection pressure profiles and timing drift
-- Compression pressure trends (peak pressure and rate of pressure rise)
-- Scavenge air pressure relative to turbocharger speed
-
-**Operational Context**
-- Load factor (percentage of MCR)
-- Specific fuel oil consumption (SFOC) trend and deviation from baseline
-- Power output vs. hull resistance (early fouling detection)
-- Cumulative running hours since last overhaul per component
-
-### 3. Models
-
-**XGBoost Classifier -- Fault Detection**
-
-Multi-label classification for identifying specific degradation modes:
-
-- Bearing wear (main, crankpin, crosshead)
-- Cylinder liner scoring and scuffing
-- Turbocharger surge and bearing deterioration
-- Fuel injector failure (atomization degradation, needle seat wear)
-- Exhaust valve recession and blow-by
-- Cooling water system fouling
-
-Trained on labeled maintenance records mapped to pre-failure sensor windows. Class imbalance handled via SMOTE and cost-sensitive learning, since failure events are rare relative to normal operation.
-
-**DNN Regressor -- Remaining Useful Life (RUL)**
-
-A deep neural network that estimates hours remaining before a component reaches its maintenance threshold:
-
-- Architecture: fully connected network with batch normalization and dropout
-- Input: rolling feature windows (configurable 24h--168h lookback)
-- Output: point estimate + prediction interval (aleatoric uncertainty via MC Dropout)
-- Loss: asymmetric loss function penalizing over-prediction (predicting more remaining life than actual) more heavily than under-prediction
-
-**Isolation Forest -- Anomaly Detection**
-
-Unsupervised detection of novel failure modes not present in training data:
-
-- Operates on the full feature space to catch unexpected multivariate deviations
-- Contamination parameter tuned per equipment class
-- Flags novel patterns for engineering review and potential model retraining
-
-### 4. Explainability
-
-Every prediction is accompanied by SHAP (SHapley Additive exPlanations) values. This is not optional -- it is a core design requirement.
-
-- **Fault detection**: SHAP waterfall plots show which sensor features drove the classification
-- **RUL estimation**: SHAP dependence plots reveal which operational conditions are accelerating degradation
-- **Audit trail**: all SHAP outputs are logged with timestamps for post-incident review
-
-Classification societies increasingly require that automated decision-support systems provide transparent reasoning. SHAP values directly satisfy this requirement by attributing each prediction to measurable physical quantities that engineers can verify against domain knowledge.
-
-### 5. Alerting
-
-Four-tier severity system aligned with standard engine room alarm conventions:
-
-| Level | Condition | Action |
-|---|---|---|
-| **NORMAL** | All parameters within baseline | Continue monitoring |
-| **WATCH** | Early degradation detected; RUL > maintenance planning horizon | Schedule inspection at next port |
-| **ALARM** | Significant degradation; RUL approaching maintenance threshold | Initiate maintenance planning, increase monitoring frequency |
-| **SHUTDOWN** | Critical fault probability exceeds safety threshold | Recommend immediate load reduction or controlled shutdown |
-
-Thresholds are configurable per equipment class and can be tuned based on operator risk tolerance and operational constraints (e.g., mid-ocean vs. coastal sailing).
-
----
-
-## Supported Equipment
-
-| Equipment | Typical Sensors | Key Failure Modes |
-|---|---|---|
-| Main engines (2-stroke low-speed) | Cylinder pressure, exhaust temps, bearing temps, scavenge air | Liner wear, bearing damage, exhaust valve failure |
-| Main engines (4-stroke medium-speed) | Vibration, cylinder pressure, lube oil analysis | Piston ring wear, injector degradation, turbo damage |
-| Auxiliary engines and generators | Vibration, temperature, load, frequency | Bearing wear, governor faults, alternator issues |
-| Turbochargers | Speed, vibration, inlet/outlet temps, pressure ratio | Surge, fouling, bearing deterioration |
-| Pumps (CW, LO, FO) | Vibration, discharge pressure, flow rate, motor current | Impeller erosion, seal leakage, cavitation |
-| Compressors | Vibration, pressure stages, temperature, valve condition | Valve failure, ring wear, intercooler fouling |
-| Heat exchangers | Inlet/outlet temps, pressure drop, flow rates | Fouling, tube leakage, gasket deterioration |
-
----
-
-## Data Sources
-
-### Real-Time
-
-- **NMEA 2000 / SAE J1939-76**: Standard marine CAN bus protocol. TRITON-ML reads PGNs for engine parameters (RPM, temperatures, pressures, fuel rate) via a SocketCAN or USB-CAN gateway.
-- **Modbus RTU**: Serial communication with PLCs, SCADA systems, and standalone sensor transmitters. Configurable register maps per installation.
-
-### Historical / Batch
-
-- **CSV and Parquet files**: Import historical operational logs, maintenance records, and condition reports. Parquet preferred for large datasets due to columnar compression.
-- **AIS data**: Automatic Identification System records provide operational context -- vessel speed, heading, and draft -- which correlates with engine load and environmental conditions.
+`ONNXExporter.export_rul()` converts the RUL network with `torch.onnx.export` at
+opset 17 with a dynamic batch axis, then validates the graph using `onnx.checker`.
+`verify()` runs the exported graph through ONNX Runtime so the export can be checked
+against the source model. XGBoost models are saved as JSON through XGBoost's own
+serialiser, not converted to ONNX, and there is no quantisation step.
 
 ---
 
 ## Tech Stack
 
+Everything below is an actual dependency in `pyproject.toml` and is imported by the
+code:
+
 | Component | Technology |
 |---|---|
 | Language | Python 3.10+ |
-| Deep learning | PyTorch 2.x |
-| Gradient boosting | XGBoost 2.x |
-| ML utilities | scikit-learn 1.x |
+| Deep learning | PyTorch 2.1+ |
+| Gradient boosting | XGBoost 2.0+ |
+| Anomaly detection | scikit-learn 1.3+ (Isolation Forest) |
 | Explainability | SHAP 0.43+ |
-| Data processing | pandas, NumPy |
-| Signal processing | SciPy (FFT, filtering, envelope) |
-| Visualization | Matplotlib, Plotly |
-| Experiment tracking | MLflow |
-| Configuration | Hydra / OmegaConf |
-| Edge export | ONNX Runtime |
-| Testing | pytest |
+| Numerics | NumPy 1.24+ |
+| Signal processing | SciPy 1.11+ (Welch PSD, Hilbert transform) |
+| Alert transport | websockets 12+ |
+| Configuration | PyYAML 6+ |
+| Edge export | onnx 1.15+, onnxruntime 1.17+ |
+| Dev tooling | pytest, ruff, mypy |
+
+No pandas, Matplotlib, Plotly, MLflow or Hydra -- the pipeline works on NumPy arrays
+and dataclasses, and configuration is a single YAML file.
 
 ---
 
@@ -209,29 +185,30 @@ Thresholds are configurable per equipment class and can be tuned based on operat
 
 ```
 TRITON-ML/
-├── configs/                  # Hydra configuration files
-│   ├── data/                 # Data source configs per vessel
-│   ├── model/                # Model hyperparameters
-│   ├── features/             # Feature engineering configs
-│   └── alerting/             # Threshold definitions
-├── src/
-│   └── triton/
-│       ├── ingestion/        # Data readers (NMEA, Modbus, CSV/Parquet)
-│       ├── features/         # Feature engineering pipeline
-│       ├── models/           # XGBoost, DNN, Isolation Forest
-│       ├── explain/          # SHAP integration and reporting
-│       ├── alerting/         # Severity classification and notifications
-│       ├── export/           # ONNX conversion and edge packaging
-│       └── utils/            # Logging, metrics, data validation
-├── notebooks/                # Exploratory analysis and model development
-├── tests/                    # Unit and integration tests
-├── data/
-│   ├── raw/                  # Raw sensor dumps (not committed)
-│   ├── processed/            # Engineered feature sets
-│   └── models/               # Trained model artifacts
+├── triton_ml/
+│   ├── __init__.py              # Package exports: Settings, AlertEngine, ONNXExporter
+│   ├── __main__.py              # CLI entry point (argument / config validation)
+│   ├── config.py                # Frozen dataclass settings + Settings.from_yaml()
+│   ├── alerting.py              # AlertEngine, Alert, Severity + WebSocket dispatch
+│   ├── export.py                # ONNXExporter
+│   ├── features/
+│   │   ├── __init__.py          # FeaturePipeline (merges the three extractors)
+│   │   ├── vibration.py         # VibrationFeatureExtractor
+│   │   ├── thermal.py           # ThermalFeatureExtractor
+│   │   └── operational.py       # OperationalFeatureExtractor
+│   └── models/
+│       ├── __init__.py
+│       ├── fault_classifier.py  # XGBoost + SHAP
+│       ├── rul_estimator.py     # PyTorch MLP + MC-dropout
+│       └── anomaly.py           # Isolation Forest
+├── tests/                       # pytest suite
+├── .github/workflows/ci.yml     # ruff + mypy + pytest on Python 3.11
+├── config.example.yaml          # Example config for Settings.from_yaml()
+├── docker-compose.yml           # TimescaleDB + Grafana for local development
+├── .env.example                 # Credentials template for docker-compose
 ├── pyproject.toml
-├── Dockerfile
-└── README.md
+├── requirements.txt
+└── LICENSE
 ```
 
 ---
@@ -240,7 +217,7 @@ TRITON-ML/
 
 ```bash
 # Clone the repository
-git clone https://github.com/<org>/TRITON-ML.git
+git clone https://github.com/hermandoronin/TRITON-ML.git
 cd TRITON-ML
 
 # Create environment
@@ -251,125 +228,147 @@ source .venv/bin/activate   # Linux/macOS
 # Install dependencies
 pip install -e ".[dev]"
 
-# Run feature engineering on sample data
-python -m triton.features.pipeline --config configs/features/default.yaml
-
-# Train fault detection model
-python -m triton.models.train_xgb --config configs/model/xgboost.yaml
-
-# Train RUL estimator
-python -m triton.models.train_dnn --config configs/model/dnn_rul.yaml
-
-# Generate SHAP explanations
-python -m triton.explain.report --model-path data/models/xgb_fault.json
-
-# Export to ONNX for edge deployment
-python -m triton.export.to_onnx --model-path data/models/dnn_rul.pt
+# Run the test suite
+pytest tests/ -v
 ```
 
----
+The CLI exposes three subcommands:
 
-## Edge Deployment
+```bash
+python -m triton_ml train   --config config.yaml
+python -m triton_ml predict --model model.onnx --input data.csv
+python -m triton_ml export  --model model.pt   --output model.onnx
+```
 
-Shipboard systems typically lack reliable internet connectivity and run on constrained hardware. TRITON-ML supports edge deployment through ONNX export:
+**These are not a training pipeline yet.** `train` loads and validates the YAML
+config through `Settings.from_yaml()` and logs the resulting parameters; `predict`
+and `export` check that their file arguments exist. All three then log a warning and
+stop -- the orchestration is not written (see `triton_ml/__main__.py`). Use the
+library API directly in the meantime:
 
-1. **Model export**: Trained PyTorch and XGBoost models are converted to ONNX format with full operator coverage verification.
-2. **Runtime**: ONNX Runtime provides cross-platform inference on x86 and ARM hardware without requiring PyTorch or XGBoost at runtime.
-3. **Quantization**: INT8 quantization available for further size and latency reduction on resource-constrained edge devices.
-4. **Inference container**: Minimal Docker image (~200 MB) containing only ONNX Runtime, feature engineering logic, and alerting module.
+```python
+import numpy as np
+from triton_ml.features import FeaturePipeline
 
-Target hardware: industrial PCs (e.g., Advantech, Kontron) commonly found in engine control rooms, as well as NVIDIA Jetson modules for installations requiring GPU-accelerated signal processing.
-
-Inference latency target: < 500 ms per equipment unit per inference cycle on CPU-only hardware.
-
----
-
-## Classification Society Alignment
-
-TRITON-ML is designed with classification society requirements in mind. While the software itself is not class-approved, its architecture supports the documentation and transparency expectations of major societies:
-
-| Society | Relevant Framework | How TRITON-ML Aligns |
-|---|---|---|
-| **DNV** | DNV-RU-SHIP Pt.4 Ch.3, DNV-CG-0264 (data-driven methods) | SHAP explainability, audit logging, uncertainty quantification |
-| **Lloyd's Register** | ShipRight Predictive: Digital Maintenance | Equipment-specific models, condition trend tracking, alert severity levels |
-| **Bureau Veritas** | NR 467 (smart ship notation), NR 641 (cyber) | Data provenance tracking, model versioning, input validation |
-
-Key compliance features:
-- Full prediction audit trail with timestamps, input features, model version, and SHAP attributions
-- Model performance monitoring with drift detection (data and concept drift)
-- Human-in-the-loop design: the system recommends, the engineer decides
-- No autonomous control actions -- TRITON-ML is advisory only
+rng = np.random.default_rng(0)
+features = FeaturePipeline().run(
+    vib_raw=rng.standard_normal(4096),             # accelerometer window
+    thermal_readings=rng.normal(350, 5, (60, 6)),  # (timesteps, sensors), degC
+    rpm=rng.normal(95, 1, 60),
+    fuel_flow=rng.normal(1800, 20, 60),            # kg/h
+    torque=rng.normal(900_000, 5_000, 60),         # Nm
+    scav_pressure=rng.normal(2.6, 0.05, 60),       # bar
+)
+print(len(features))   # 15
+```
 
 ---
 
 ## Configuration
 
-All pipeline parameters are managed through Hydra configuration files. Example for a 4-stroke auxiliary engine:
+`Settings.from_yaml()` reads a single YAML file. Recognised sections are `paths`,
+`model`, `alerts` and `onnx`; anything you omit falls back to the dataclass defaults
+in `triton_ml/config.py`. See [`config.example.yaml`](config.example.yaml) for the
+full layout.
 
-```yaml
-# configs/data/aux_engine_4s.yaml
-equipment:
-  type: auxiliary_engine
-  stroke: 4
-  cylinders: 6
+```python
+from triton_ml.config import Settings
 
-sensors:
-  vibration:
-    sampling_rate: 25600   # Hz
-    channels: [de_bearing, nde_bearing, cylinder_head]
-  temperature:
-    sampling_rate: 1       # Hz
-    channels: [exhaust_1, exhaust_2, exhaust_3, exhaust_4, exhaust_5, exhaust_6,
-               lo_inlet, lo_outlet, cw_inlet, cw_outlet]
-  pressure:
-    sampling_rate: 1
-    channels: [lo_main_gallery, fo_rail, cw_pump_discharge]
-
-features:
-  vibration_window: 1.0    # seconds per FFT window
-  trend_windows: [3600, 21600, 86400, 604800]   # 1h, 6h, 24h, 7d in seconds
-  rpm_bins: 10             # bins for pressure-vs-RPM curves
-
-alerting:
-  thresholds:
-    watch:  0.35           # fault probability
-    alarm:  0.65
-    shutdown: 0.90
-  rul_horizon: 720         # hours -- maintenance planning window
+settings = Settings.from_yaml("config.yaml")
+print(settings.alerts.shutdown_rul_hours)   # 24.0
 ```
+
+For local development, `docker-compose.yml` brings up TimescaleDB and Grafana. Copy
+`.env.example` to `.env` and set credentials first -- compose fails fast if they are
+unset. TRITON-ML itself is not containerised; there is no Dockerfile in this
+repository.
 
 ---
 
 ## Testing
 
 ```bash
-# Run full test suite
 pytest tests/ -v
-
-# Run with coverage
-pytest tests/ --cov=triton --cov-report=html
-
-# Run only model tests
-pytest tests/test_models/ -v
-
-# Run integration tests (requires sample data)
-pytest tests/integration/ -v --run-integration
 ```
+
+29 tests covering vibration feature extraction (dominant frequency, RMS, kurtosis,
+envelope), fault classifier training / prediction / SHAP, alert severity
+transitions, and YAML config loading. CI additionally runs `ruff check` and `mypy`
+on Python 3.11.
+
+No coverage tooling is configured and there are no integration tests -- the suite is
+unit-level only and runs on synthetic signals, not recorded machinery data.
+
+---
+
+## Not Implemented Yet
+
+Listed here because earlier versions of this README described these as if they
+already existed. They do not. Roughly in the order I would like to build them:
+
+**Data ingestion** -- there is no ingestion module at all. NMEA 2000 / SAE J1939 CAN
+decoding, Modbus RTU polling, AIS context, and CSV/Parquet readers with timestamp
+alignment across differing sample rates are all planned, none written. Today the
+caller passes NumPy arrays in directly.
+
+**Richer vibration analysis** -- bearing characteristic defect frequencies
+(BPFO / BPFI / BSF / FTF) and order tracking against shaft speed; spectral kurtosis
+for demodulation band selection; RMS velocity in the bands used by vibration
+severity standards. The current extractor is broadband only.
+
+**Pressure analysis** -- lube oil pressure versus RPM characteristic curves,
+injection pressure profiles, compression peak pressure and rate of pressure rise. No
+pressure-domain extractor exists; scavenge air pressure is the only pressure signal
+used, and only as a mean.
+
+**Multi-window trending** -- 1 h / 6 h / 24 h / 7 d trend slopes and cumulative
+running hours since last overhaul. Extractors currently see one window at a time and
+hold no state.
+
+**Model work** -- class-imbalance handling (resampling or class weights); an
+asymmetric RUL loss penalising over-prediction of remaining life more heavily than
+under-prediction; rolling-window inputs; SHAP for the RUL network.
+
+**Deployment** -- a Dockerfile and inference container, INT8 quantisation, ONNX
+conversion of the XGBoost model, and latency benchmarks on real edge hardware.
+Nothing here has been measured, so this README quotes no image size or latency
+figures.
+
+---
+
+## On Classification Societies
+
+Class societies expect automated decision-support tools to be transparent and
+auditable, which is why SHAP attribution and explicit uncertainty output are in the
+design from the start rather than bolted on afterwards. That is a design principle I
+am working toward -- not a compliance claim. TRITON-ML has not been submitted to,
+reviewed by, or approved by any classification society, and I cite no specific class
+rules here because I have not verified this code against them.
+
+The one property the code does enforce is advisory-only behaviour: it emits alerts
+and explanations and takes no control action.
 
 ---
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE).
 
 ---
 
 ## About the Author
 
-Marine engineer with 3+ years of hands-on maintenance experience on seagoing vessels -- from overhauling main engine cylinder units to troubleshooting turbocharger bearing failures at 2 AM in the Indian Ocean. Now applying machine learning to the domain I know from inside the engine room.
+Marine engineer with hands-on maintenance experience on seagoing vessels -- from
+overhauling main engine cylinder units to troubleshooting turbocharger bearing
+failures at 2 AM in the Indian Ocean. Now learning to apply machine learning to the
+domain I know from inside the engine room.
 
-TRITON-ML exists because I have seen firsthand what unplanned breakdowns cost: not just money, but safety margins, crew rest hours, and operational reliability. The gap between what modern ML can detect in sensor data and what traditional watch-keeping catches is enormous. This project aims to close that gap with tools that are transparent, auditable, and built by someone who understands both the machinery and the math.
+TRITON-ML exists because I have seen what unplanned breakdowns cost: not just money,
+but safety margins, crew rest hours, and operational reliability. This repository is
+where I work out how much of that intuition can be expressed as code -- kept honest
+by writing down what is missing alongside what is finished.
 
 ---
 
-*TRITON-ML is a research preview. It is not a certified safety system and must not be used as the sole basis for maintenance decisions on safety-critical equipment.*
+*TRITON-ML is a research preview. It is not a certified safety system and must not
+be used as the basis for maintenance decisions on safety-critical equipment.*
