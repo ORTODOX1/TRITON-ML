@@ -1,8 +1,10 @@
 """
 Vibration feature extraction from hull and machinery accelerometers.
 
-Follows ISO 10816 / ISO 20816 vibration severity classification
-for rotating marine machinery (main engines, turbochargers, pumps).
+Computes broadband condition indicators (RMS, kurtosis, crest factor,
+dominant frequency, Hilbert envelope peak) for rotating marine machinery
+such as main engines, turbochargers and pumps. Severity banding against
+a vibration standard is not implemented.
 """
 
 from __future__ import annotations

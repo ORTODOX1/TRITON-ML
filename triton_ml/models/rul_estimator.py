@@ -1,10 +1,10 @@
 """
 Remaining Useful Life (RUL) estimator using PyTorch DNN.
 
-Predicts hours until next required maintenance action, with
-epistemic uncertainty quantified via Monte-Carlo dropout.
-Calibrated against hull machinery run-to-failure datasets
-(NASA C-MAPSS adapted to marine diesel duty cycles).
+Predicts hours until the next required maintenance action, with
+epistemic (model) uncertainty quantified via Monte-Carlo dropout.
+The network ships untrained: no run-to-failure dataset is bundled
+with this repository, so any calibration is left to the user.
 """
 
 from __future__ import annotations

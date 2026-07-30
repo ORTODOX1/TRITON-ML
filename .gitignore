@@ -26,8 +26,9 @@ wandb/
 outputs/
 
 # Data and models (large files, not committed)
-data/
-models/
+# Anchored to the repo root: an unanchored 'models/' also matched triton_ml/models/
+/data/
+/models/
 
 # IDE
 .vscode/

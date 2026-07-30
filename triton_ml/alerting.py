@@ -1,9 +1,9 @@
 """
 Four-tier alert engine for machinery health status.
 
-Integrates with AEGIS-MONITOR WebSocket gateway to push real-time
-alerts to the bridge and engine control room dashboards.
-Severity tiers per DNV GL RU Ship Pt.4 Ch.9 Sec.3.
+Pushes alerts over a WebSocket connection to a monitoring dashboard.
+The four severity tiers are a project convention, not a class society
+or IMO requirement.
 """
 
 from __future__ import annotations

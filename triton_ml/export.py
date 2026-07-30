@@ -1,9 +1,9 @@
 """
 ONNX model exporter for shipboard edge deployment.
 
-Exports trained PyTorch RUL models to ONNX format for inference
-on Advantech UNO-2484G marine-grade edge computers or similar
-IEC 61850-compliant industrial PCs running ONNX Runtime.
+Exports trained PyTorch RUL models to ONNX format so that inference
+can run on ONNX Runtime without a PyTorch installation, which suits
+the modest industrial PCs typically found in engine control rooms.
 """
 
 from __future__ import annotations

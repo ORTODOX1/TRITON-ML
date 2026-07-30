@@ -1,9 +1,9 @@
 """
 Thermal feature extraction from engine and exhaust temperature arrays.
 
-Marine diesel exhaust-gas temperature deviation is a primary indicator
-of cylinder imbalance, turbocharger fouling, and injector degradation
-(ref: MAN Energy Solutions Technical Paper 2019-01).
+Marine diesel exhaust-gas temperature deviation is a well-known
+indicator of cylinder imbalance, turbocharger fouling, and injector
+degradation, and is tracked routinely during engine-room watchkeeping.
 """
 
 from __future__ import annotations
