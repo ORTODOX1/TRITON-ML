@@ -1,15 +1,18 @@
 """
 Central configuration for TRITON-ML pipeline.
 
-All thresholds calibrated against IMO MSC.1/Circ.1460 guidelines
-for condition-based maintenance of marine machinery.
+Thresholds are project defaults chosen for demonstration purposes.
+They are not derived from any standard or certified dataset and must
+be tuned per vessel and equipment class before any practical use.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict
+
+import yaml
 
 
 @dataclass(frozen=True)
@@ -37,7 +40,7 @@ class ModelParams:
 
 @dataclass(frozen=True)
 class AlertThresholds:
-    """Four-tier alert boundaries (ISO 20816 vibration severity zones)."""
+    """Four-tier alert boundaries expressed in remaining-useful-life hours."""
 
     watch_rul_hours: float = 720.0   # 30 days
     alarm_rul_hours: float = 168.0   # 7 days
@@ -47,13 +50,12 @@ class AlertThresholds:
 
 @dataclass(frozen=True)
 class ONNXConfig:
-    """Settings for ONNX export targeting edge inference on shipboard PLCs."""
+    """Settings for ONNX export targeting edge inference on shipboard hardware."""
 
     opset_version: int = 17
     dynamic_axes: Dict[str, Dict[int, str]] = field(
         default_factory=lambda: {"input": {0: "batch"}, "output": {0: "batch"}}
     )
-    optimise_for_mobile: bool = True
 
 
 @dataclass(frozen=True)
@@ -64,3 +66,22 @@ class Settings:
     model: ModelParams = ModelParams()
     alerts: AlertThresholds = AlertThresholds()
     onnx: ONNXConfig = ONNXConfig()
+
+    @classmethod
+    def from_yaml(cls, path: Path | str) -> Settings:
+        """Build a Settings instance from a YAML file.
+
+        Recognised top-level sections are ``paths``, ``model``, ``alerts``
+        and ``onnx``. Any section that is absent falls back to the defaults
+        defined above; see ``config.example.yaml`` for the full layout.
+        """
+        with open(path, "r", encoding="utf-8") as handle:
+            raw: dict[str, Any] = yaml.safe_load(handle) or {}
+
+        paths = {key: Path(value) for key, value in raw.get("paths", {}).items()}
+        return cls(
+            paths=DataPaths(**paths),
+            model=ModelParams(**raw.get("model", {})),
+            alerts=AlertThresholds(**raw.get("alerts", {})),
+            onnx=ONNXConfig(**raw.get("onnx", {})),
+        )

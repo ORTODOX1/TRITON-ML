@@ -1,10 +1,13 @@
 # TRITON-ML Configuration Example
 # Copy to config.yaml and adjust for your vessel / equipment.
+#
+# Loaded by triton_ml.config.Settings.from_yaml(). Every key below maps to a
+# field of Settings; sections you omit fall back to the defaults in config.py.
 
 # -- Data paths ----------------------------------------------------------
 paths:
-  raw_telemetry: "data/raw"           # Raw sensor dumps (Parquet / CSV)
-  processed_features: "data/features" # Engineered feature tables
+  raw_telemetry: "data/raw"
+  processed_features: "data/features"
   trained_models: "models/checkpoints"
   onnx_export: "models/onnx"
 
@@ -23,7 +26,8 @@ model:
   # Isolation Forest anomaly detector
   isolation_contamination: 0.02
 
-# -- Alert thresholds (ISO 20816 zones) ----------------------------------
+# -- Alert thresholds ----------------------------------------------------
+# Project defaults, not standard-derived. Tune per equipment class.
 alerts:
   watch_rul_hours: 720.0      # 30 days -- schedule inspection at next port
   alarm_rul_hours: 168.0      #  7 days -- initiate maintenance planning
@@ -33,23 +37,6 @@ alerts:
 # -- ONNX export settings ------------------------------------------------
 onnx:
   opset_version: 17
-  optimise_for_mobile: true   # Strip training-only ops for edge inference
   dynamic_axes:
     input:  { 0: "batch" }
     output: { 0: "batch" }
-
-# -- Training run ---------------------------------------------------------
-training:
-  epochs: 100
-  batch_size: 64
-  learning_rate: 0.001
-  validation_split: 0.15
-  early_stopping_patience: 10
-  seed: 42
-
-# -- Equipment context (used for logging and alert routing) ---------------
-equipment:
-  vessel_name: "MV Example"
-  equipment_id: "ME-001"
-  equipment_type: "main_engine"
-  mcr_kw: 12000.0
