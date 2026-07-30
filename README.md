@@ -1,6 +1,6 @@
 # TRITON-ML -- Predictive Maintenance for Ship Machinery
 
-[![Research Preview](https://img.shields.io/badge/status-research%20preview-orange)](https://github.com/TRITON-ML)
+[![Research Preview](https://img.shields.io/badge/status-research%20preview-orange)](https://github.com/hermandoronin/TRITON-ML)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C.svg?logo=pytorch&logoColor=white)](https://pytorch.org/)
