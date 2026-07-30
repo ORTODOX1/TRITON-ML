@@ -7,7 +7,7 @@ Designed for integration with AEGIS-MONITOR telemetry pipeline.
 """
 
 __version__ = "0.4.0"
-__author__ = "Fincantieri Digital"
+__author__ = "Herman Doronin"
 
 from triton_ml.config import Settings
 from triton_ml.alerting import AlertEngine
