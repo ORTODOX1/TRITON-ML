@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import yaml
 
@@ -53,7 +53,7 @@ class ONNXConfig:
     """Settings for ONNX export targeting edge inference on shipboard hardware."""
 
     opset_version: int = 17
-    dynamic_axes: Dict[str, Dict[int, str]] = field(
+    dynamic_axes: dict[str, dict[int, str]] = field(
         default_factory=lambda: {"input": {0: "batch"}, "output": {0: "batch"}}
     )
 

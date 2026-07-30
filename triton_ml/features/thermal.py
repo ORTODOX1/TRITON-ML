@@ -8,10 +8,10 @@ degradation, and is tracked routinely during engine-room watchkeeping.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 from numpy.typing import NDArray
-from dataclasses import dataclass
-from typing import List
 
 
 @dataclass
@@ -63,7 +63,7 @@ class ThermalFeatureExtractor:
             cylinder_spread=cylinder_spread,
         )
 
-    def extract_batch(self, windows: List[NDArray[np.float64]]) -> List[ThermalFeatures]:
+    def extract_batch(self, windows: list[NDArray[np.float64]]) -> list[ThermalFeatures]:
         """Extract features from multiple consecutive windows."""
         return [self.extract(w) for w in windows]
 

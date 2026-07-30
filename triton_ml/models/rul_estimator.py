@@ -10,11 +10,9 @@ with this repository, so any calibration is left to the user.
 from __future__ import annotations
 
 import numpy as np
-from numpy.typing import NDArray
-from typing import Tuple, Optional
-
 import torch
-import torch.nn as nn
+from numpy.typing import NDArray
+from torch import nn
 
 from triton_ml.config import Settings
 
@@ -35,13 +33,14 @@ class _RULNetwork(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x).squeeze(-1)
+        out: torch.Tensor = self.net(x)
+        return out.squeeze(-1)
 
 
 class RULEstimator:
     """Remaining useful life predictor with uncertainty bounds."""
 
-    def __init__(self, input_dim: int = 12, settings: Optional[Settings] = None) -> None:
+    def __init__(self, input_dim: int = 12, settings: Settings | None = None) -> None:
         self._cfg = settings or Settings()
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._model = _RULNetwork(
@@ -69,7 +68,7 @@ class RULEstimator:
                 loss_fn(self._model(xb), yb).backward()
                 optimiser.step()
 
-    def predict(self, X: NDArray[np.float64]) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
+    def predict(self, X: NDArray[np.float64]) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         """Return (mean_rul_hours, std_rul_hours) via MC-dropout sampling."""
         self._model.train()  # keep dropout active for MC sampling
         xt = torch.tensor(X, dtype=torch.float32).to(self._device)

@@ -9,10 +9,11 @@ a vibration standard is not implemented.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 from numpy.typing import NDArray
 from scipy import signal
-from dataclasses import dataclass
 
 
 @dataclass

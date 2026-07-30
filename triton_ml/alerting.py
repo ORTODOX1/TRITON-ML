@@ -10,10 +10,9 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from enum import IntEnum
-from dataclasses import dataclass, asdict
-from typing import Optional
 
 import websockets.sync.client as ws_client
 
@@ -45,7 +44,7 @@ class Alert:
 class AlertEngine:
     """Evaluate model outputs and emit alerts over WebSocket."""
 
-    def __init__(self, settings: Optional[Settings] = None,
+    def __init__(self, settings: Settings | None = None,
                  ws_url: str = "ws://aegis-monitor:8400/ws/alerts") -> None:
         self._cfg = settings or Settings()
         self._ws_url = ws_url

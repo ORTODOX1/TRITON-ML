@@ -7,14 +7,15 @@ suitable for downstream fault classification and RUL estimation.
 
 from __future__ import annotations
 
+from dataclasses import asdict
+from typing import Any
+
 import numpy as np
 from numpy.typing import NDArray
-from dataclasses import asdict
-from typing import Dict, Any
 
-from triton_ml.features.vibration import VibrationFeatureExtractor
-from triton_ml.features.thermal import ThermalFeatureExtractor
 from triton_ml.features.operational import OperationalFeatureExtractor
+from triton_ml.features.thermal import ThermalFeatureExtractor
+from triton_ml.features.vibration import VibrationFeatureExtractor
 
 
 class FeaturePipeline:
@@ -42,14 +43,14 @@ class FeaturePipeline:
         fuel_flow: NDArray[np.float64],
         torque: NDArray[np.float64],
         scav_pressure: NDArray[np.float64],
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Execute all extractors and return merged feature dictionary."""
         vib = self.vibration.extract(vib_raw)
         therm = self.thermal.extract(thermal_readings)
         ops = self.operational.extract(rpm, fuel_flow, torque, scav_pressure)
 
-        features: Dict[str, Any] = {}
-        for prefix, feat_obj in [("vib", vib), ("therm", therm), ("ops", ops)]:
+        features: dict[str, Any] = {}
+        for prefix, feat_obj in (("vib", vib), ("therm", therm), ("ops", ops)):
             for key, value in asdict(feat_obj).items():
                 if isinstance(value, np.ndarray):
                     continue  # skip raw spectral arrays

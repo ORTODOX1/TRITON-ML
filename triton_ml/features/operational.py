@@ -8,9 +8,10 @@ in slow-speed two-stroke and medium-speed four-stroke marine diesels.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 from numpy.typing import NDArray
-from dataclasses import dataclass
 
 
 @dataclass

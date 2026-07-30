@@ -8,12 +8,11 @@ vessels or after major overhaul when baseline patterns shift.
 
 from __future__ import annotations
 
+import pickle
+from pathlib import Path
+
 import numpy as np
 from numpy.typing import NDArray
-from pathlib import Path
-from typing import Optional
-import pickle
-
 from sklearn.ensemble import IsolationForest
 
 from triton_ml.config import Settings
@@ -22,7 +21,7 @@ from triton_ml.config import Settings
 class AnomalyDetector:
     """Isolation Forest wrapper tuned for marine telemetry streams."""
 
-    def __init__(self, settings: Optional[Settings] = None) -> None:
+    def __init__(self, settings: Settings | None = None) -> None:
         self._cfg = settings or Settings()
         self._model = IsolationForest(
             contamination=self._cfg.model.isolation_contamination,
@@ -40,14 +39,15 @@ class AnomalyDetector:
     def score(self, X: NDArray[np.float64]) -> NDArray[np.float64]:
         """Return anomaly scores; more negative = more anomalous."""
         self._ensure_fitted()
-        return self._model.score_samples(X)
+        scores: NDArray[np.float64] = self._model.score_samples(X)
+        return scores
 
     def is_anomalous(self, X: NDArray[np.float64]) -> NDArray[np.bool_]:
         """Binary anomaly flag per sample (True = anomaly)."""
         scores = self.score(X)
         return scores < self._cfg.alerts.anomaly_score_limit
 
-    def save(self, path: Optional[Path] = None) -> Path:
+    def save(self, path: Path | None = None) -> Path:
         """Serialize fitted model."""
         dest = path or self._cfg.paths.trained_models / "anomaly_detector.pkl"
         dest.parent.mkdir(parents=True, exist_ok=True)

@@ -9,13 +9,13 @@ the vessel's planned maintenance system (PMS):
 
 from __future__ import annotations
 
-import numpy as np
-from numpy.typing import NDArray
 from pathlib import Path
-from typing import Optional
+from typing import ClassVar
 
-import xgboost as xgb
+import numpy as np
 import shap
+import xgboost as xgb
+from numpy.typing import NDArray
 
 from triton_ml.config import Settings
 
@@ -23,12 +23,12 @@ from triton_ml.config import Settings
 class FaultClassifier:
     """Gradient-boosted fault classifier with SHAP explainability."""
 
-    FAULT_LABELS = {
+    FAULT_LABELS: ClassVar[dict[int, str]] = {
         0: "NORMAL", 1: "BEARING_WEAR", 2: "MISALIGNMENT",
         3: "IMBALANCE", 4: "FOULING", 5: "INJECTOR_FAULT",
     }
 
-    def __init__(self, settings: Optional[Settings] = None) -> None:
+    def __init__(self, settings: Settings | None = None) -> None:
         self._cfg = settings or Settings()
         self._model = xgb.XGBClassifier(
             n_estimators=self._cfg.model.xgb_n_estimators,
@@ -39,7 +39,7 @@ class FaultClassifier:
             tree_method="hist",
             eval_metric="mlogloss",
         )
-        self._explainer: Optional[shap.TreeExplainer] = None
+        self._explainer: shap.TreeExplainer | None = None
 
     def train(self, X: NDArray[np.float64], y: NDArray[np.int64]) -> None:
         """Fit classifier on labelled maintenance records."""
@@ -48,7 +48,8 @@ class FaultClassifier:
 
     def predict(self, X: NDArray[np.float64]) -> NDArray[np.int64]:
         """Return predicted fault class indices."""
-        return self._model.predict(X)
+        labels: NDArray[np.int64] = self._model.predict(X)
+        return labels
 
     def predict_proba(self, X: NDArray[np.float64]) -> NDArray[np.float64]:
         """Return per-class probabilities for alert prioritisation."""
@@ -60,7 +61,7 @@ class FaultClassifier:
             raise RuntimeError("Model must be trained before explanation")
         return self._explainer(X)
 
-    def save(self, path: Optional[Path] = None) -> Path:
+    def save(self, path: Path | None = None) -> Path:
         """Persist model to JSON for reproducibility."""
         dest = path or self._cfg.paths.trained_models / "fault_classifier.json"
         dest.parent.mkdir(parents=True, exist_ok=True)

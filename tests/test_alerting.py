@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from triton_ml.alerting import AlertEngine, Severity, Alert
-from triton_ml.config import Settings, AlertThresholds
+from triton_ml.alerting import AlertEngine, Severity
+from triton_ml.config import AlertThresholds, Settings
 
 
 @pytest.fixture

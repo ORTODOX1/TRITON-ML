@@ -36,7 +36,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4", "ruff>=0.1", "mypy>=1.7"]
+# ruff and mypy are pinned to exact versions: ruff's default rule set and mypy's
+# inference both change between minor releases, which turns CI red without a
+# single source change. Bump them deliberately, not implicitly.
+# types-PyYAML gives config.py real types for yaml.safe_load instead of Any.
+dev = [
+    "pytest>=7.4",
+    "ruff==0.16.0",
+    "mypy==2.3.0",
+    "types-PyYAML>=6.0",
+]
 
 [tool.setuptools.packages.find]
 include = ["triton_ml*"]
@@ -48,3 +57,16 @@ line-length = 100
 [tool.mypy]
 python_version = "3.10"
 strict = true
+
+# scipy, scikit-learn, shap and onnxruntime ship neither inline types nor a stub
+# package, so mypy cannot see into them. They are listed one by one instead of
+# setting a global ignore_missing_imports, so that adding another untyped
+# dependency stays a conscious decision rather than something CI silently accepts.
+[[tool.mypy.overrides]]
+module = [
+    "scipy.*",
+    "sklearn.*",
+    "shap.*",
+    "onnxruntime.*",
+]
+ignore_missing_imports = true

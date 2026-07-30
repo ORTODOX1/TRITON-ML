@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from triton_ml.models.fault_classifier import FaultClassifier
 from triton_ml.config import Settings
+from triton_ml.models.fault_classifier import FaultClassifier
 
 
 @pytest.fixture
